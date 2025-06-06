@@ -1,0 +1,14 @@
+# .gitignore
+
+# Dependencias
+node_modules/
+
+# custom
+instructions/
+
+# Archivos de entorno (contiene secretos)
+.env
+
+# Archivos de caché y logs
+couchdb_cache.json
+*.log
