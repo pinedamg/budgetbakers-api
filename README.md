@@ -14,6 +14,7 @@ This project provides a Node.js and Express-based RESTful API designed to serve 
 *   **Modular and Maintainable Architecture:** Adheres to Separation of Concerns (SoC) and Don't Repeat Yourself (DRY) principles with a well-defined project structure.
 *   **Centralized Configuration:** Utilizes environment variables for flexible and secure application settings.
 *   **Standardized Error Handling:** Implements centralized error management for consistent JSON error responses.
+*   **Interactive API Documentation:** Provides Swagger/OpenAPI documentation with an interactive UI for exploring and testing endpoints, including a direct login mechanism.
 *   **HTTP Request Logging:** Uses `morgan` for development-friendly request logging.
 
 ## Project Architecture
@@ -21,7 +22,7 @@ This project provides a Node.js and Express-based RESTful API designed to serve 
 The application is structured to promote clarity and ease of maintenance:
 
 *   `src/`: Contains all application source code.
-    *   `config/index.js`: Centralizes application configuration, loading sensitive data from `.env`.
+    *   `config/`: Centralizes application configuration, including `.env` loading (`index.js`) and Swagger setup (`swagger.config.js`).
     *   `routes/`: Defines API endpoints, with each file dedicated to a specific entity (e.g., `records.routes.js`).
     *   `controllers/`: Manages HTTP request/response logic, acting as an intermediary between routes and services.
     *   `services/`: Houses the core business logic and database interaction (e.g., `authService.js` for BudgetBakers authentication, `recordService.js` for transaction management).

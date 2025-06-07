@@ -31,22 +31,25 @@ const LOGIN_PAGE_URL = `${BASE_URL}/es-ES/sign-in?callbackUrl=%2Fdashboard`; // 
  * Cachea el cliente axios autenticado y los datos de replicación de CouchDB.
  */
 async function getAuthenticatedData() {
+  // console.log('DEBUG: Inicio de getAuthenticatedData. Cache actual - isAuthenticated:', sessionCache.isAuthenticated, 'hasAxios:', !!sessionCache.authenticatedAxiosInstance, 'hasReplicationData:', !!sessionCache.replicationData);
+
   // TODO: Implementar lógica de expiración de sesión más robusta
   if (sessionCache.isAuthenticated && sessionCache.authenticatedAxiosInstance && sessionCache.replicationData) {
-    console.log('INFO: Usando sesión de BudgetBakers/CouchDB desde caché.');
+    // console.log('INFO: Usando sesión de BudgetBakers/CouchDB desde caché.');
     return {
       client: sessionCache.authenticatedAxiosInstance,
       session: sessionCache.replicationData,
       csrfToken: sessionCache.csrfToken,
     };
   }
-
-  console.log('INFO: No hay sesión en caché o ha expirado. Iniciando autenticación completa...');
   
   // Reiniciar cookieJar para un nuevo intento de autenticación
-  sessionCache.cookieJar = new CookieJar();
+  // Solo reiniciamos la cookieJar si vamos a crear una nueva instancia de axios para esta autenticación.
+  // Si authenticatedAxiosInstance ya existe de un login anterior (ej. vía /auth/login) pero falta replicationData,
+  // podríamos intentar usar esa instancia. Sin embargo, para simplificar y asegurar limpieza para .env auth:
+  const internalAuthCookieJar = new CookieJar();
   // Crear la instancia de axios que usará la cookieJar para todas las operaciones de esta sesión
-  sessionCache.authenticatedAxiosInstance = wrapper(axios.create({ jar: sessionCache.cookieJar, withCredentials: true }));
+  const internalAxiosInstance = wrapper(axios.create({ jar: internalAuthCookieJar, withCredentials: true }));
 
 
   const email = process.env.BUDGETBAKERS_EMAIL;
@@ -57,51 +60,48 @@ async function getAuthenticatedData() {
   }
 
   // Paso 1: Obtener CSRF Token
-  console.log(`DEBUG: Paso 1 - Petición GET a CSRF_URL: ${CSRF_URL}`);
-  const csrfResponse = await sessionCache.authenticatedAxiosInstance.get(CSRF_URL, { headers: { 'Referer': LOGIN_PAGE_URL } });
-  sessionCache.csrfToken = csrfResponse.data.csrfToken;
-  if (!sessionCache.csrfToken) {
+  const csrfResponse = await internalAxiosInstance.get(CSRF_URL, { headers: { 'Referer': LOGIN_PAGE_URL } });
+  const obtainedCsrfToken = csrfResponse.data.csrfToken;
+  if (!obtainedCsrfToken) {
     throw new Error('No se pudo obtener el token CSRF del cuerpo de la respuesta.');
   }
-  console.log('DEBUG: Paso 1 - Cookies después de obtener CSRF:', JSON.stringify(sessionCache.cookieJar.toJSON(), null, 2));
-  console.log('INFO: Paso 1 - Token CSRF obtenido del cuerpo:', sessionCache.csrfToken);
+  // console.log('DEBUG: Paso 1 (getAuthData) - Cookies después de obtener CSRF:', JSON.stringify(internalAuthCookieJar.toJSON(), null, 2));
+  // console.log('INFO: Paso 1 (getAuthData) - Token CSRF obtenido del cuerpo:', obtainedCsrfToken);
 
   // Paso 2: Realizar Login
-  const loginPayload = new URLSearchParams({ callbackUrl: '/es-ES/dashboard', redirect: 'false', email, password, csrfToken: sessionCache.csrfToken, json: 'true' });
+  const loginPayload = new URLSearchParams({ callbackUrl: '/es-ES/dashboard', redirect: 'false', email, password, csrfToken: obtainedCsrfToken, json: 'true' });
   const loginRequestHeaders = { 'Content-Type': 'application/x-www-form-urlencoded', 'Origin': BASE_URL, 'Referer': LOGIN_PAGE_URL };
   
-  console.log(`DEBUG: Paso 2 - Petición POST a SIGN_IN_URL: ${SIGN_IN_URL}`);
-  console.log('DEBUG: Paso 2 - Payload de Login:', loginPayload.toString());
-  console.log('DEBUG: Paso 2 - Headers de Login:', JSON.stringify(loginRequestHeaders, null, 2));
-  
-  const loginResponse = await sessionCache.authenticatedAxiosInstance.post(SIGN_IN_URL, loginPayload.toString(), { headers: loginRequestHeaders });
+  const loginResponse = await internalAxiosInstance.post(SIGN_IN_URL, loginPayload.toString(), { headers: loginRequestHeaders });
 
   if (loginResponse.status !== 200) {
-    // Podríamos querer loguear loginResponse.data aquí si el status no es 200
-    console.error('DEBUG: Paso 2 - Respuesta de Login no exitosa:', JSON.stringify(loginResponse.data, null, 2));
+    console.error('DEBUG: Paso 2 (getAuthData) - Respuesta de Login no exitosa:', JSON.stringify(loginResponse.data, null, 2));
     throw new Error(`Fallo en el login. Status: ${loginResponse.status}`);
   }
-  console.log('DEBUG: Paso 2 - Cookies después del Login:', JSON.stringify(sessionCache.cookieJar.toJSON(), null, 2));
-  console.log('INFO: Paso 2 - Login exitoso.');
+  // console.log('DEBUG: Paso 2 (getAuthData) - Cookies después del Login:', JSON.stringify(internalAuthCookieJar.toJSON(), null, 2));
+  // console.log('INFO: Paso 2 (getAuthData) - Login exitoso.');
 
   // Paso 3: Obtener datos de sesión (y credenciales de CouchDB)
   const sessionRequestHeaders = { 'Referer': `${BASE_URL}/es-ES/dashboard` }; // Podríamos añadir 'Accept: application/json' si es necesario
-  console.log(`DEBUG: Paso 3 - Petición GET a SESSION_URL: ${SESSION_URL}`);
-  console.log('DEBUG: Paso 3 - Headers para obtener sesión:', JSON.stringify(sessionRequestHeaders, null, 2));
   
-  const sessionResponse = await sessionCache.authenticatedAxiosInstance.get(SESSION_URL, { headers: sessionRequestHeaders });
+  const sessionDataResponse = await internalAxiosInstance.get(SESSION_URL, { headers: sessionRequestHeaders });
   
-  console.log('DEBUG: Paso 3 - Status de sessionResponse:', sessionResponse.status);
-  console.log('DEBUG: Paso 3 - Contenido de sessionResponse.data:', JSON.stringify(sessionResponse.data, null, 2));
+  // console.log('DEBUG: Paso 3 (getAuthData) - Status de sessionResponse:', sessionDataResponse.status);
+  // console.log('DEBUG: Paso 3 (getAuthData) - Contenido de sessionResponse.data:', JSON.stringify(sessionDataResponse.data, null, 2));
 
-  if (sessionResponse.status !== 200 || !sessionResponse.data || Object.keys(sessionResponse.data).length === 0 || !sessionResponse.data.user || !sessionResponse.data.user.replication) {
-    console.error('ERROR: Paso 3 - La estructura de sessionResponse.data no es la esperada o está vacía.');
+  if (sessionDataResponse.status !== 200 || !sessionDataResponse.data || Object.keys(sessionDataResponse.data).length === 0 || !sessionDataResponse.data.user || !sessionDataResponse.data.user.replication) {
+    console.error('ERROR: Paso 3 (getAuthData) - La estructura de sessionResponse.data no es la esperada o está vacía. Data:', JSON.stringify(sessionDataResponse.data, null, 2));
     throw new Error('No se encontraron los datos de replicación de CouchDB en la sesión.');
   }
 
-  sessionCache.replicationData = sessionResponse.data.user.replication;
+  // Actualizar el caché del servidor con la nueva sesión completamente establecida
+  sessionCache.csrfToken = obtainedCsrfToken;
+  sessionCache.cookieJar = internalAuthCookieJar;
+  sessionCache.authenticatedAxiosInstance = internalAxiosInstance;
+  sessionCache.replicationData = sessionDataResponse.data.user.replication;
   sessionCache.isAuthenticated = true;
-  console.log('INFO: Paso 3 - Credenciales de CouchDB obtenidas y cacheadas.');
+  // console.log('INFO: Paso 3 (getAuthData) - Autenticación interna completada y sesión cacheada.');
+  // console.log('DEBUG: Fin de getAuthenticatedData. Cache actualizado - isAuthenticated:', sessionCache.isAuthenticated, 'hasAxios:', !!sessionCache.authenticatedAxiosInstance, 'hasReplicationData:', !!sessionCache.replicationData);
 
   return {
     client: sessionCache.authenticatedAxiosInstance,
@@ -117,7 +117,7 @@ async function getAuthenticatedData() {
  * @returns {Promise<Array<{name: string, value: string, options: object}>>} Array of cookie objects for res.cookie()
  */
 async function loginAndRetrieveCookies(email, password) {
-  console.log('INFO: Attempting login via loginAndRetrieveCookies...');
+  // console.log('INFO: Attempting login via loginAndRetrieveCookies...');
   // Ensure a fresh cookieJar for this login attempt
   const loginCookieJar = new CookieJar();
   const loginAxiosInstance = wrapper(axios.create({ jar: loginCookieJar, withCredentials: true }));
@@ -128,7 +128,7 @@ async function loginAndRetrieveCookies(email, password) {
   if (!csrfTokenValue) {
     throw new Error('Failed to obtain CSRF token during login.');
   }
-  console.log('INFO: CSRF token obtained for login.');
+  // console.log('INFO: CSRF token obtained for login.');
 
   // Step 2: Perform Login
   const loginPayload = new URLSearchParams({ callbackUrl: '/es-ES/dashboard', redirect: 'false', email, password, csrfToken: csrfTokenValue, json: 'true' });
@@ -139,7 +139,7 @@ async function loginAndRetrieveCookies(email, password) {
     console.error('ERROR: BudgetBakers login failed via loginAndRetrieveCookies:', JSON.stringify(loginResponse.data, null, 2));
     throw new Error(`BudgetBakers login failed. Status: ${loginResponse.status}`);
   }
-  console.log('INFO: BudgetBakers login successful via loginAndRetrieveCookies.');
+  // console.log('INFO: BudgetBakers login successful via loginAndRetrieveCookies.');
 
   // Extract cookies to be set by Express
   const cookiesToSet = [];
@@ -174,13 +174,12 @@ async function loginAndRetrieveCookies(email, password) {
   // Fetch replication data to complete the server-side session state
   const sessionDataResponse = await sessionCache.authenticatedAxiosInstance.get(SESSION_URL, { headers: { 'Referer': `${BASE_URL}/es-ES/dashboard` } });
   if (sessionDataResponse.status !== 200 || !sessionDataResponse.data || !sessionDataResponse.data.user || !sessionDataResponse.data.user.replication) {
-    console.warn('WARN: Could not fetch replication data for server-side session after login.');
+    console.error('ERROR: Could not fetch replication data for server-side session after /auth/login. Data:', JSON.stringify(sessionDataResponse.data, null, 2));
     sessionCache.replicationData = null; // Or handle more gracefully
   } else {
     sessionCache.replicationData = sessionDataResponse.data.user.replication;
   }
   sessionCache.isAuthenticated = true;
-
   return cookiesToSet;
 }
 
